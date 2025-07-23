@@ -1,0 +1,77 @@
+{
+  "input_raw": {
+    "links_to": {
+      "input_chunk": {
+        "via": "raw_id",
+        "type": "one_to_many",
+        "description": "Each raw document (input_raw) can produce multiple semantically segmented chunks (input_chunk)."
+      }
+    }
+  },
+  "input_chunk": {
+    "links_to": {
+      "input_raw": {
+        "via": "raw_id",
+        "type": "many_to_one",
+        "description": "Each chunk is derived from a single raw document."
+      },
+      "input_fact": {
+        "via": "chunk_id",
+        "type": "one_to_many",
+        "description": "Multiple semantic facts can be extracted from a single chunk."
+      },
+      "assign_meta": {
+        "via": "chunk_id",
+        "type": "one_to_one_or_null",
+        "description": "Each chunk can be assigned to a semantic cluster through assign_meta."
+      }
+    }
+  },
+  "input_fact": {
+    "links_to": {
+      "input_chunk": {
+        "via": "chunk_id",
+        "type": "many_to_one",
+        "description": "Each fact originates from a specific chunk."
+      },
+      "cluster_meta": {
+        "via": "cluster_id",
+        "type": "many_to_one_or_null",
+        "description": "A fact can optionally be linked to a semantic cluster."
+      }
+    }
+  },
+  "assign_meta": {
+    "links_to": {
+      "input_chunk": {
+        "via": "chunk_id",
+        "type": "many_to_one",
+        "description": "Indicates which chunk is assigned to which cluster."
+      },
+      "cluster_meta": {
+        "via": "cluster_id",
+        "type": "many_to_one",
+        "description": "Points to the cluster that the chunk is assigned to."
+      }
+    }
+  },
+  "cluster_meta": {
+    "links_to": {
+      "assign_meta": {
+        "via": "cluster_id",
+        "type": "one_to_many",
+        "description": "Each cluster can contain multiple chunks via assign_meta."
+      },
+      "input_fact": {
+        "via": "cluster_id",
+        "type": "one_to_many_optional",
+        "description": "Clusters can optionally be linked to multiple facts."
+      },
+      "cluster_meta": {
+        "via": "parent_cluster_id",
+        "type": "hierarchical",
+        "description": "Clusters can form a hierarchy through parent-child relationships."
+      }
+    }
+  }
+}

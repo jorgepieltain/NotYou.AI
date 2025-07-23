@@ -1,0 +1,13 @@
+[project]
+name = "agente_ia"
+version = "0.1.0"
+description = "Sistema modular de agentes IA con LangGraph, Supabase y n8n"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cluster_interpreter*"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
