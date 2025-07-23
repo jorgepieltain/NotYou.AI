@@ -1,0 +1,132 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from uuid import UUID, uuid4
+import numpy as np
+import hdbscan
+import umap
+
+app = FastAPI(title="Cluster_Service_Pro")
+
+class EmbeddingItem(BaseModel):
+    input_id: str
+    embedding: List[float]
+
+class ClusterRequest(BaseModel):
+    level: str
+    source_table: str
+    input_type: Optional[str] = "text"
+    reduction: Optional[int] = None
+    items: List[EmbeddingItem]
+
+class ClusterResponse(BaseModel):
+    cluster_id: UUID
+    parent_cluster_id: Optional[UUID] = None
+    depth: int
+    cluster_path: str
+    num_elements: int
+    embedding_avg: List[float]
+    topic_embedding: List[float]
+    cohesion_score: float
+    representative_id: int
+    assigned_ids: List[int]
+    top5_ids: List[int]
+    input_type: Optional[str] = "text"
+
+@app.post("/clusterize", response_model=List[ClusterResponse])
+async def clusterize(req: ClusterRequest):
+    if not req.items:
+        raise HTTPException(status_code=400, detail="No items provided")
+
+    embeddings = np.array([item.embedding for item in req.items])
+    input_ids = [item.input_id for item in req.items]
+
+    if req.reduction:
+        reducer = umap.UMAP(n_components=req.reduction, random_state=42)
+        reduced_embeddings = reducer.fit_transform(embeddings)
+    else:
+        reduced_embeddings = embeddings
+
+    macro_clusterer = hdbscan.HDBSCAN(min_cluster_size=5)
+    macro_labels = macro_clusterer.fit_predict(reduced_embeddings)
+
+    macro_clusters = {}
+    for label, input_id, emb in zip(macro_labels, input_ids, reduced_embeddings):
+        if label == -1:
+            continue
+        macro_clusters.setdefault(label, []).append((input_id, emb))
+
+    responses = []
+
+    for i, (macro_label, macro_items) in enumerate(macro_clusters.items()):
+        macro_cluster_id = uuid4()
+        macro_path = f"C{i}"
+        macro_embeddings = np.array([e for _, e in macro_items])
+        macro_avg = macro_embeddings.mean(axis=0)
+        dists = np.linalg.norm(macro_embeddings - macro_avg, axis=1)
+        sorted_indices = np.argsort(dists)
+        rep_idx = sorted_indices[0]
+        rep_id = int(macro_items[rep_idx][0])
+        topic_emb = macro_embeddings[rep_idx]
+        cohesion_score = float(np.exp(-np.mean(dists)))
+        top5_ids = [int(macro_items[i][0]) for i in sorted_indices[:5]]
+        assigned_ids = [int(macro_items[i][0]) for i in sorted_indices]
+
+        responses.append(ClusterResponse(
+            cluster_id=macro_cluster_id,
+            parent_cluster_id=None,
+            depth=0,
+            cluster_path=macro_path,
+            num_elements=len(macro_items),
+            embedding_avg=macro_avg.tolist(),
+            topic_embedding=topic_emb.tolist(),
+            cohesion_score=cohesion_score,
+            representative_id=rep_id,
+            assigned_ids=assigned_ids,
+            top5_ids=top5_ids,
+            input_type=req.input_type
+        ))
+
+        sub_embeddings = macro_embeddings
+        sub_ids = [id_ for id_, _ in macro_items]
+
+        sub_clusterer = hdbscan.HDBSCAN(min_cluster_size=3)
+        sub_labels = sub_clusterer.fit_predict(sub_embeddings)
+
+        sub_clusters = {}
+        for label, input_id, emb in zip(sub_labels, sub_ids, sub_embeddings):
+            if label == -1:
+                continue
+            sub_clusters.setdefault(label, []).append((input_id, emb))
+
+        for j, (sub_label, sub_items) in enumerate(sub_clusters.items()):
+            sub_cluster_id = uuid4()
+            sub_path = f"{macro_path}.{macro_path}_{j}"
+            sub_embeddings_arr = np.array([e for _, e in sub_items])
+            sub_avg = sub_embeddings_arr.mean(axis=0)
+            dists = np.linalg.norm(sub_embeddings_arr - sub_avg, axis=1)
+            sorted_indices = np.argsort(dists)
+            rep_idx = sorted_indices[0]
+            rep_id = int(sub_items[rep_idx][0])
+            topic_emb = sub_embeddings_arr[rep_idx]
+            cohesion_score = float(np.exp(-np.mean(dists)))
+            top5_ids = [int(sub_items[i][0]) for i in sorted_indices[:5]]
+            assigned_ids = [int(sub_items[i][0]) for i in sorted_indices]
+
+            responses.append(ClusterResponse(
+                cluster_id=sub_cluster_id,
+                parent_cluster_id=macro_cluster_id,
+                depth=1,
+                cluster_path=sub_path,
+                num_elements=len(sub_items),
+                embedding_avg=sub_avg.tolist(),
+                topic_embedding=topic_emb.tolist(),
+                cohesion_score=cohesion_score,
+                representative_id=rep_id,
+                assigned_ids=assigned_ids,
+                top5_ids=top5_ids,
+                input_type=req.input_type
+            ))
+
+    return responses
+

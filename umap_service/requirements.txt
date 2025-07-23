@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+numpy
+umap-learn
+scikit-learn

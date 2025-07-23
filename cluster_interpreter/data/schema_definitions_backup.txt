@@ -1,0 +1,350 @@
+{"input_raw": {
+    "description": (
+        "This table stores the original unprocessed textual data ingested by the system. "
+        "Each record represents a raw input document or source, before any chunking or semantic processing is applied. "
+        "It serves as the root of the document processing pipeline."
+    ),
+    "fields": {
+        "id": {
+            "type": "UUID",
+            "description": "Primary key. Unique identifier for the raw input source. Used to trace all derived chunks."
+        },
+        "raw_text": {
+            "type": "text",
+            "description": "The full unsegmented text extracted from the source. This is the base material for chunking."
+        },
+        "source_type": {
+            "type": "text",
+            "description": "General classification of the input origin (e.g. 'pdf', 'web', 'reddit', etc.). "
+                           "Useful for adapting downstream processing behavior depending on content structure."
+        },
+        "source_name": {
+            "type": "text (nullable)",
+            "description": "Specific identifier for the source, such as filename, URL, subreddit name, etc."
+        },
+        "language": {
+            "type": "text (default: 'es')",
+            "description": "Detected language of the input text. Used to determine whether translation is needed."
+        },
+        "status": {
+            "type": "text (default: 'pendiente')",
+            "description": "Processing status of the input (e.g. 'pendiente', 'procesado'). Useful for orchestration, not needed for agents."
+        },
+        "metadata": {
+            "type": "jsonb (nullable)",
+            "description": "Optional structured metadata extracted from the input context (e.g. section, author, topic). "
+                           "Can be propagated into chunk-level metadata for semantic enrichment."
+        },
+        "created_at": {
+            "type": "timestamptz",
+            "description": "Timestamp of ingestion. Used for audit, sorting, or time-based filtering if needed."
+        }
+    },
+    "usage_notes": (
+        "input_raw is not used directly in the reasoning process of agents, but it defines the origin of all input_chunk records. "
+        "Fields like language, source_type and metadata may be referenced when enriching the semantic context of the cluster."
+    )
+},
+
+"input_chunk": {
+  "description": (
+    "This table stores the semantically segmented text units (chunks) extracted from raw input sources. "
+    "Each record corresponds to a coherent passage, optimized for embedding and retrieval. "
+    "It serves as the core table for semantic processing, including clustering, summarization, and retrieval-augmented generation."
+  ),
+  "fields": {
+    "chunk_id": {
+      "type": "bigserial",
+      "description": "Primary key. Unique identifier for each chunk. Used across the system to reference content in downstream tasks."
+    },
+    "raw_id": {
+      "type": "UUID (nullable)",
+      "description": "Foreign key referencing input_raw.id. Connects the chunk back to its source document for traceability and potential enrichment."
+    },
+    "content": {
+      "type": "text",
+      "description": "The text content of the chunk. This is the canonical unit used for embeddings, semantic reasoning, and generation."
+    },
+    "embedding": {
+      "type": "vector (nullable, 1536 dimensions)",
+      "description": "Embedding vector computed via OpenAI's gpt-3.5-embedding-3-small model (1536-dimensional). Used for similarity search and clustering."
+    },
+    "length": {
+      "type": "integer (nullable)",
+      "description": "Token count of the chunk, used for controlling batching, sizing filters and segment granularity validation."
+    },
+    "chunk_index": {
+      "type": "integer (default: 0)",
+      "description": "Index of the chunk within the original document, indicating its order for possible sequence reconstruction."
+    },
+    "created_at": {
+      "type": "timestamptz (default: now())",
+      "description": "Timestamp of chunk creation. Useful for debugging, temporal analysis or incremental processing."
+    },
+    "metadata": {
+      "type": "jsonb (nullable)",
+      "description": (
+        "Chunk-level metadata generated at the time of creation. Includes technical information from the chunking process "
+        "and extractor (e.g., file location, type of blob, inferred language, and source path). "
+        "Not directly inherited from input_raw.metadata, but can reflect transformations or additional context from it."
+      )
+    },
+    "lang": {
+      "type": "text (nullable)",
+      "description": "Detected language of the chunk. Used for filtering, translation, or multilingual processing."
+    },
+    "status": {
+      "type": "text (default: 'pendiente')",
+      "description": "Processing status of the chunk. Used for orchestration across the pipeline."
+    },
+    "sentiment": {
+      "type": "text (nullable)",
+      "description": "Reserved field for storing sentiment analysis results. Currently unused."
+    },
+    "toxicity": {
+      "type": "text (nullable)",
+      "description": "Reserved field for toxicity scoring, e.g., for moderation purposes. Currently unused."
+    }
+  },
+  "usage_notes": (
+    "This table represents the atomic semantic unit of reasoning in the system. Chunks are the input for embeddings, clustering, summarization, and content generation. "
+    "They are typically retrieved via vector similarity and then interpreted in the context of their metadata, language, and position. "
+    "All higher-level constructs (facts, clusters, narratives) are built upon this layer. "
+    "Note that sentiment and toxicity fields are reserved for future moderation or filtering tasks and may remain empty during early stages."
+  )
+},
+
+"input_fact": {
+  "description": (
+    "This table stores semantically extracted facts from individual input chunks. "
+    "Each row represents a typed unit of information (fact) identified through LLMs or heuristic extractors. "
+    "Facts enrich the semantic layer of the system and serve as input for clustering, summarization, generation and reasoning."
+  ),
+  "fields": {
+    "fact_id": {
+      "type": "bigserial",
+      "description": "Primary key. Unique identifier for the fact."
+    },
+    "chunk_id": {
+      "type": "bigint (nullable)",
+      "description": "Foreign key to input_chunk.chunk_id. Indicates the origin chunk from which the fact was extracted."
+    },
+    "fact_type": {
+      "type": "text (enum)",
+      "description": (
+        "Specifies the semantic category of the extracted fact. "
+        "Allowed values: 'entity', 'emotion', 'pain point', 'need', 'claim', 'attention hook', 'narrative'. "
+        "This type determines the conceptual role the fact plays in the system."
+      )
+    },
+    "value": {
+      "type": "jsonb",
+      "description": "Content of the fact. Can include text spans, classification labels, summaries, or other extracted information, depending on the extraction logic for each fact_type."
+    },
+    "confidence": {
+      "type": "double precision (nullable)",
+      "description": "Optional confidence score assigned during extraction (range 0.0–1.0)."
+    },
+    "source": {
+      "type": "text (nullable)",
+      "description": "Optional descriptor indicating the origin or technique used to extract the fact (e.g., 'gpt-4', 'custom_rule')."
+    },
+    "extracted_by": {
+      "type": "text (nullable)",
+      "description": "Name or ID of the extractor agent or service that produced the fact."
+    },
+    "created_at": {
+      "type": "timestamptz (default: now())",
+      "description": "Timestamp when the fact was created."
+    },
+    "updated_at": {
+      "type": "timestamptz (default: now())",
+      "description": "Timestamp of last update, automatically updated via trigger."
+    },
+    "status": {
+      "type": "text (nullable)",
+      "description": "Optional processing status (e.g., 'pendiente', 'validado')."
+    },
+    "entity_type": {
+      "type": "text (nullable)",
+      "description": "Relevant only for facts of type 'entity'. Specifies the class of the entity (e.g., 'brand', 'product', etc.)."
+    },
+    "cluster_id": {
+      "type": "UUID (nullable)",
+      "description": "Optional reference to the semantic cluster this fact belongs to. Enables thematic grouping and access."
+    }
+  },
+  "fact_type_definitions": {
+    "entity": "A specific noun phrase or named concept mentioned in the chunk, such as a brand, product, person, location, etc. Useful for indexing, co-reference, and graph construction.",
+    "emotion": "An emotional expression detected in the text (positive or negative). Typically inferred from tone, wording, or explicit sentiment language.",
+    "pain point": "A frustration, complaint, or problem experienced by the speaker or implied in the text. Often used to detect unmet expectations or barriers.",
+    "need": "An expressed or inferred desire, request or requirement. Captures what the user wants, seeks or lacks.",
+    "claim": "A declarative statement or belief, whether objective or subjective. Can include opinions, affirmations, or perceived truths.",
+    "attention hook": "A phrase or pattern designed to capture attention, increase engagement, or trigger curiosity. Useful for content generation or virality analysis.",
+    "narrative": "A short coherent story fragment embedded in the chunk. May reflect personal experience, transformation, or testimonial structure."
+  },
+  "usage_notes": (
+    "This table acts as a semantic abstraction layer over the input chunks. "
+    "Each fact is typed and linked to a chunk, and can optionally be associated to a cluster. "
+    "The `value` field is flexible and its schema depends on the extractor logic per fact_type. "
+    "Downstream processes use these facts for clustering, prompt generation, and insight extraction."
+  )
+},
+
+"cluster_meta": {
+  "description": (
+    "This table stores metadata and semantic descriptors for each cluster created from input data. "
+    "Each cluster groups a set of semantically related items (e.g., chunks or facts) based on vector embeddings. "
+    "This table defines the structure, lineage, and interpretative properties of each cluster, allowing downstream agents to reason at an abstract level."
+  ),
+  "fields": {
+    "cluster_id": {
+      "type": "UUID",
+      "description": "Primary key. Unique identifier of the cluster."
+    },
+    "parent_cluster_id": {
+      "type": "UUID (nullable)",
+      "description": "Optional reference to a parent cluster (used for hierarchical clustering). Enables recursive depth modeling and tree navigation."
+    },
+    "depth": {
+      "type": "integer",
+      "description": "Hierarchical depth of the cluster. Root-level clusters have depth = 0."
+    },
+    "cluster_path": {
+      "type": "text",
+      "description": "String representation of the hierarchical path to this cluster (e.g., '0.2.1'). Useful for traversal or lineage queries."
+    },
+    "source_table": {
+      "type": "text (default: 'input_chunk')",
+      "description": "Name of the table from which the clustered elements were sourced (e.g., 'input_chunk', 'input_fact')."
+    },
+    "input_type": {
+      "type": "text",
+      "description": "Label identifying the semantic unit type used for clustering (e.g., 'chunk', 'fact', 'narrative', etc.). Distinct from table name."
+    },
+    "num_elements": {
+      "type": "integer",
+      "description": "Number of elements (rows) included in this cluster."
+    },
+    "embedding_avg": {
+      "type": "double precision[]",
+      "description": "Centroid vector (average) of the embeddings of all elements in the cluster. Used for distance-based comparison."
+    },
+    "topic_embedding": {
+      "type": "double precision[]",
+      "description": "Vector representing the inferred topic of the cluster. May be computed from summary, key facts or via separate model."
+    },
+    "summary": {
+      "type": "text (nullable)",
+      "description": "Optional human-readable or LLM-generated summary that describes the essence of the cluster's content."
+    },
+    "core_concepts": {
+      "type": "text[] (nullable)",
+      "description": "Optional list of key concepts or terms representative of the cluster. Can be used for tagging or concept mapping."
+    },
+    "emotional_tone": {
+      "type": "text (nullable)",
+      "description": "Dominant emotional tone inferred from the cluster's content (e.g., 'positive', 'frustrated', 'hopeful')."
+    },
+    "graph_role": {
+      "type": "text (nullable)",
+      "description": "Optional label describing the conceptual role of the cluster in a knowledge graph (e.g., 'central topic', 'objection', 'aspiration')."
+    },
+    "validation_score": {
+  "type": "double precision (nullable)",
+  "description": "Average social validation score of the cluster's elements (e.g., average number of likes, upvotes, or engagement metrics). Used to approximate external relevance or popularity."
+},
+    "cohesion_score": {
+      "type": "double precision (nullable)",
+      "description": "Score estimating the internal semantic similarity among the cluster’s elements. Higher values indicate tighter clusters."
+    },
+    "representative_id": {
+      "type": "integer (nullable)",
+      "description": "ID of the element selected as most representative of the cluster (e.g., chunk_id or fact_id). Used for previewing."
+    },
+    "created_by_agent": {
+      "type": "text (nullable)",
+      "description": "Name or identifier of the agent or service that created this cluster. Useful for versioning and audit."
+    },
+    "created_at": {
+      "type": "timestamptz (default: now() at UTC)",
+      "description": "Timestamp of cluster creation."
+    },
+    "updated_at": {
+      "type": "timestamptz (default: now() at UTC)",
+      "description": "Timestamp of last update. Useful for tracking re-clustering or summaries."
+    }
+  },
+  "usage_notes": (
+  "Each row in this table defines a semantically coherent group of elements (chunks or facts) with shared meaning or theme. "
+  "Clustering is hierarchical and recursive (via parent_cluster_id). This table enables RAG, summarization, graph construction, and creative generation grounded in clusters. "
+  "The `validation_score` reflects social validation (likes, upvotes, etc.) and can help prioritize high-impact clusters in downstream tasks."
+)
+},
+
+
+"assign_meta": {
+  "description": (
+    "This table links individual input chunks to their assigned semantic clusters. "
+    "It captures the assignment relationship along with metadata needed for retrieval, ordering, validation scoring, and downstream analysis."
+  ),
+  "fields": {
+    "id": {
+      "type": "UUID (default: gen_random_uuid())",
+      "description": "Primary key. Unique identifier for the assignment entry."
+    },
+    "cluster_id": {
+      "type": "UUID",
+      "description": "Foreign key to cluster_meta.cluster_id. Indicates the cluster this chunk belongs to."
+    },
+    "chunk_id": {
+      "type": "integer",
+      "description": "Foreign key to input_chunk.chunk_id. Identifies the chunk being assigned to the cluster."
+    },
+    "content": {
+      "type": "text",
+      "description": "Snapshot of the chunk’s full content at assignment time. Facilitates fast access without joining input_chunk."
+    },
+    "score": {
+      "type": "numeric (nullable)",
+      "description": "Average social validation score (e.g., likes, upvotes) associated with this chunk. Used to estimate external relevance or engagement."
+    },
+    "length": {
+      "type": "integer (nullable)",
+      "description": "Token or character length of the chunk. Useful for summarization filters or structural analysis."
+    },
+    "source_type": {
+      "type": "text (nullable)",
+      "description": "Type of origin of the chunk's parent document (e.g., 'reddit', 'web', 'pdf'). Enables source-aware processing."
+    },
+    "position": {
+      "type": "integer (nullable)",
+      "description": "Index of the chunk within the cluster, based on distance to the centroid. 0 means it is the most central or representative."
+    },
+    "tags": {
+      "type": "text[] (nullable)",
+      "description": "Optional list of semantic or structural tags assigned during assignment (e.g., 'highlight', 'example', etc.)."
+    },
+    "cluster_path": {
+      "type": "text (nullable)",
+      "description": "Denormalized path of the cluster (e.g., '1.0.2'). Used for fast filtering and traceability across hierarchies."
+    },
+    "created_at": {
+      "type": "timestamptz (default: now())",
+      "description": "Timestamp of the assignment."
+    },
+    "chunk_index": {
+      "type": "integer (nullable)",
+      "description": "Original index of the chunk within its parent document. Enables reordering or contextual display."
+    }
+  },
+  "usage_notes": (
+    "This table maps content to clusters with semantic and social context. "
+    "Each assignment may carry a position (proximity to centroid) and a validation score (external relevance via likes). "
+    "This structure supports ranked retrieval, cluster visualization, narrative extraction, and relevance-aware generation."
+  )
+}
+}
+
+
+
